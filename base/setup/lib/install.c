@@ -892,12 +892,12 @@ IndexOEMFolders(
 
     // Check if $OEM$ exists - exit function if it doesn't
     status = OpenOEMSourceFolder(&hOEMDir, wszOEMDirPath);
-    if (status == STATUS_NO_SUCH_FILE)
+    if ((status == STATUS_NO_SUCH_FILE) || (status == STATUS_OBJECT_NAME_NOT_FOUND))
     {
         // No $OEM$ folder
         return STATUS_SUCCESS;
     }
-    else if (FAILED(status))
+    else if (status != STATUS_SUCCESS)
     {
         DPRINT1("Error 0x%08X opening OEM source folder 0x%p\r\n", status, wszOEMDirPath);
         return status;
@@ -908,7 +908,7 @@ IndexOEMFolders(
 
     // Index $OEM$\$$, which contains files that should be copied to the OS install folder (e.g. C:\ReactOS)
     status = IndexOEMSubfolder(pSetupData, L"\\$$", pSetupData->DestinationPath.Buffer);
-    if (FAILED(status) && (status != STATUS_NO_SUCH_FILE))
+    if (status != STATUS_SUCCESS)
     {
         DPRINT1("Error 0x%08X indexing OEM subfolder \\$OEM$\\$$ with destination 0x%p\r\n",
                 status,
@@ -918,7 +918,7 @@ IndexOEMFolders(
 
     // Index $OEM$\$1, which contains files that should be copied to the system drive (e.g. C:\)
     status = IndexOEMSubfolder(pSetupData, L"\\$1", pSetupData->DestinationRootPath.Buffer);
-    if ((status != STATUS_SUCCESS) && (status != STATUS_NO_SUCH_FILE))
+    if (status != STATUS_SUCCESS)
     {
         DPRINT1("Error 0x%08X indexing OEM subfolder \\$OEM$\\$1 with destination 0x%p\r\n",
                 status,
@@ -963,6 +963,20 @@ IndexOEMSubfolder(
         return status;
     }
 
+    // Try to open the source folder - it might not actually exist
+    status = OpenOEMSourceFolder(&hDir, wszSrcPath);
+    if ((status == STATUS_NO_SUCH_FILE) || (status == STATUS_OBJECT_NAME_NOT_FOUND))
+    {
+        // Folder not present - that's OK
+        return STATUS_SUCCESS;
+    }
+    else if (status != STATUS_SUCCESS)
+    {
+        // Actual error
+        DPRINT1("Error 0x%08X opening OEM source folder 0x%p\r\n", status, wszSrcPath);
+        return status;
+    }
+
     // Create the destination folder right now because SetupCommitFileQueueW does not do so
     // (See \base\setup\usetup\spapisup\fileqsup.c line 900)
     // In a way, it makes sense to do it here, since we are already traversing the directory tree.
@@ -972,120 +986,115 @@ IndexOEMSubfolder(
         DPRINT1("Error 0x%08X creating OEM destination folder 0x%p\r\n", status, pcwzDestPath);
         return status;
     }
-
-    status = OpenOEMSourceFolder(&hDir, wszSrcPath);
-    if (status == STATUS_SUCCESS)
+    
+    // Loop through all items (files and directories) in the folder
+    while ((status = NtQueryDirectoryFile(hDir,
+                                          NULL,
+                                          NULL,
+                                          NULL,
+                                          &iosb,
+                                          pinfEntry,
+                                          sizeof(arrEntryInfoData),
+                                          FileDirectoryInformation,
+                                          TRUE,
+                                          NULL,
+                                          FALSE)) == STATUS_SUCCESS)
     {
-        // Loop through all items (files and directories) in the folder
-        while ((status = NtQueryDirectoryFile(hDir,
-                                              NULL,
-                                              NULL,
-                                              NULL,
-                                              &iosb,
-                                              pinfEntry,
-                                              sizeof(arrEntryInfoData),
-                                              FileDirectoryInformation,
-                                              TRUE,
-                                              NULL,
-                                              FALSE)) == STATUS_SUCCESS)
+        // Other statuses indicate there are no more files
+        if (iosb.Status != STATUS_SUCCESS)
+            break;
+
+        // Check name length before null terminating
+        nNameLengthChars = pinfEntry->FileNameLength / sizeof(pinfEntry->FileName[0]);
+        if ((UINT_PTR)(&pinfEntry->FileName[nNameLengthChars]) >
+            (UINT_PTR)(&arrEntryInfoData[sizeof(arrEntryInfoData)]))
         {
-            // Other statuses indicate there are no more files
-            if (iosb.Status != STATUS_SUCCESS)
-                break;
-
-            // Check name length before null terminating
-            nNameLengthChars = pinfEntry->FileNameLength / sizeof(pinfEntry->FileName[0]);
-            if ((UINT_PTR)(&pinfEntry->FileName[nNameLengthChars]) >
-                (UINT_PTR)(&arrEntryInfoData[sizeof(arrEntryInfoData)]))
-            {
-                DPRINT1("Filename 0x%p too long to null terminate\r\n", pinfEntry->FileName);
-                status = STATUS_NAME_TOO_LONG;
-                break;
-            }
-
-            // Null terminate
-            pinfEntry->FileName[nNameLengthChars] = 0;
-
-            // Ignore 'files' . and ..
-            if ((pinfEntry->FileName[0] == L'.') &&
-                ((pinfEntry->FileName[1] == '.') || (pinfEntry->FileName[1] == '\0')))
-                continue;
-
-            // Check attributes to determine if directory or file
-            if (pinfEntry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            {
-                // Subdirectory
-
-                status = CombinePaths(wszSubdirSrcName,
-                                      ARRAYSIZE(wszSubdirSrcName),
-                                      2,
-                                      pcwzSrcFolderName,
-                                      pinfEntry->FileName);
-                if (status != STATUS_SUCCESS)
-                {
-                    DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
-                            pcwzSrcFolderName,
-                            pinfEntry->FileName);
-                    break;
-                }
-
-                status = CombinePaths(wszSubdirDestPath,
-                                      ARRAYSIZE(wszSubdirDestPath),
-                                      2,
-                                      pcwzDestPath,
-                                      pinfEntry->FileName);
-                if (status != STATUS_SUCCESS)
-                {
-                    DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
-                            pcwzDestPath,
-                            pinfEntry->FileName);
-                    break;
-                }
-
-                status = IndexOEMSubfolder(pSetupData, wszSubdirSrcName, wszSubdirDestPath);
-                if (status != STATUS_SUCCESS)
-                {
-                    DPRINT1("Error 0x%08X indexing OEM subfolder 0x%p with destination 0x%p\r\n",
-                            status,
-                            wszSubdirSrcName,
-                            wszSubdirDestPath);
-                    break;
-                }
-            }
-            else
-            {
-                // File
-                if (!SpFileQueueCopy(pSetupData->SetupFileQueue,
-                                     wszSrcPath,
-                                     NULL,
-                                     pinfEntry->FileName,
-                                     NULL,
-                                     NULL,
-                                     NULL,
-                                     pcwzDestPath,
-                                     pinfEntry->FileName,
-                                     0))
-                {
-                    DPRINT1("Error queueing OEM file 0x%p for copy from 0x%p to 0x%p\r\n",
-                            pinfEntry->FileName,
-                            wszSrcPath,
-                            pcwzDestPath);
-                    status = STATUS_PRINT_QUEUE_FULL; // Suggestions welcome
-                    break;
-                }
-            }
+            DPRINT1("Filename 0x%p too long to null terminate\r\n", pinfEntry->FileName);
+            status = STATUS_NAME_TOO_LONG;
+            break;
         }
 
-        // If we looped through all the files, that was a success
-        if (status == STATUS_NO_MORE_FILES)
-            status = STATUS_SUCCESS;
+        // Null terminate
+        pinfEntry->FileName[nNameLengthChars] = 0;
+
+        // Ignore 'files' . and ..
+        if ((pinfEntry->FileName[0] == L'.') &&
+            ((pinfEntry->FileName[1] == '.') || (pinfEntry->FileName[1] == '\0')))
+            continue;
+
+        // Check attributes to determine if directory or file
+        if (pinfEntry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            // Subdirectory
+
+            status = CombinePaths(wszSubdirSrcName,
+                                  ARRAYSIZE(wszSubdirSrcName),
+                                  2,
+                                  pcwzSrcFolderName,
+                                  pinfEntry->FileName);
+            if (status != STATUS_SUCCESS)
+            {
+                DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
+                        pcwzSrcFolderName,
+                        pinfEntry->FileName);
+                break;
+            }
+
+            status = CombinePaths(wszSubdirDestPath,
+                                  ARRAYSIZE(wszSubdirDestPath),
+                                  2,
+                                  pcwzDestPath,
+                                  pinfEntry->FileName);
+            if (status != STATUS_SUCCESS)
+            {
+                DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
+                        pcwzDestPath,
+                        pinfEntry->FileName);
+                break;
+            }
+
+            status = IndexOEMSubfolder(pSetupData, wszSubdirSrcName, wszSubdirDestPath);
+            if (status != STATUS_SUCCESS)
+            {
+                DPRINT1("Error 0x%08X indexing OEM subfolder 0x%p with destination 0x%p\r\n",
+                        status,
+                        wszSubdirSrcName,
+                        wszSubdirDestPath);
+                break;
+            }
+        }
         else
-            DPRINT1("Error 0x%08X querying OEM source folder 0x%p\r\n", status, wszSrcPath);
+        {
+            // File
+            if (!SpFileQueueCopy(pSetupData->SetupFileQueue,
+                                 wszSrcPath,
+                                 NULL,
+                                 pinfEntry->FileName,
+                                 NULL,
+                                 NULL,
+                                 NULL,
+                                 pcwzDestPath,
+                                 pinfEntry->FileName,
+                                 0))
+            {
+                DPRINT1("Error queueing OEM file 0x%p for copy from 0x%p to 0x%p\r\n",
+                        pinfEntry->FileName,
+                        wszSrcPath,
+                        pcwzDestPath);
+                status = STATUS_PRINT_QUEUE_FULL; // Suggestions welcome
+                break;
+            }
+        }
     }
+
+    // If we looped through all the files, that was a success
+    if (status == STATUS_NO_MORE_FILES)
+        status = STATUS_SUCCESS;
     else
-    {
-        DPRINT1("Error 0x%08X opening OEM source folder 0x%p\r\n", status, wszSrcPath);
-    }
+        DPRINT1("Error 0x%08X querying OEM source folder 0x%p\r\n", status, wszSrcPath);
+
+    NtClose(hDir);
+    hDir = NULL;
 
     return status;
 }
