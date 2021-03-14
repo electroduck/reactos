@@ -79,8 +79,16 @@ typedef struct _USETUP_DATA
     PVOID SetupFileQueue; // HSPFILEQ
 
 /* SOURCE Paths *****/
+    /* Path to the root directory of the ReactOS installation media in NT format.
+       Example: \Device\CdRom0 */
     UNICODE_STRING SourceRootPath;
+
+    /* Relative path to the ReactOS directory inside the installation media.
+       Example: \reactos */
     UNICODE_STRING SourceRootDir;
+
+    /* Path to the ReactOS directory on the installation media in NT format.
+       Example: \Device\CdRom0\reactos */
     UNICODE_STRING SourcePath;
 
 /* DESTINATION Paths *****/
@@ -96,12 +104,27 @@ typedef struct _USETUP_DATA
      * http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/efi-boot-process.html
      * http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/determining-system-volume.html
      * http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/determining-boot-volume.html
+     *
+     * Warning: This value may be null.
      */
     UNICODE_STRING SystemRootPath;
 
-    /* Path to the installation directory inside the ReactOS boot partition */
-    UNICODE_STRING DestinationArcPath;  /** Equivalent of 'NTOS_INSTALLATION::SystemArcPath' **/
-    UNICODE_STRING DestinationPath;     /** Equivalent of 'NTOS_INSTALLATION::SystemNtPath' **/
+    /*
+     * Path to the installation directory on the ReactOS boot partition in ARC format. 
+     * Example: multi(0)disk(0)rdisk(0)partition(1)\ReactOS
+     * Equivalent of 'NTOS_INSTALLATION::SystemArcPath'
+     */
+    UNICODE_STRING DestinationArcPath;
+
+    /*
+     * Path to the installation directory on the ReactOS boot partition in NT format. 
+     * Example: \Device\Harddisk0\Partition1\ReactOS
+     * Equivalent of 'NTOS_INSTALLATION::SystemNtPath'
+     */
+    UNICODE_STRING DestinationPath;
+
+    /* Path to the root directory of the boot partition in NT format. 
+       Example: \Device\Harddisk0\Partition1\ */
     UNICODE_STRING DestinationRootPath;
 
     // FIXME: This is only temporary!! Must be removed later!

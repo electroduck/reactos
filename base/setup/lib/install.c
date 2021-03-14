@@ -20,22 +20,26 @@
 #define NDEBUG
 #include <debug.h>
 
-static NTSTATUS
+static
+NTSTATUS
 IndexOEMFolders(
     IN OUT PUSETUP_DATA pSetupData);
 
-static NTSTATUS
+static
+NTSTATUS
 IndexOEMSubfolder(
     IN OUT PUSETUP_DATA pSetupData,
     IN PCWSTR pcwzSrcFolderName,
     IN PCWSTR pcwzDestRelPath);
 
-static NTSTATUS
+static
+NTSTATUS
 OpenOEMSourceFolder(
     OUT PHANDLE pHandle,
     IN PCWSTR pcwzPath);
 
-static NTSTATUS
+static
+NTSTATUS
 CreateOEMDestFolder(
     IN PCWSTR pcwzPath);
 
@@ -864,47 +868,38 @@ DoFileCopy(
     return Success;
 }
 
-/*
-(base/setup/lib/install.c:874) SourceRootPath: 0x00540D40 \Device\CdRom0
-(base/setup/lib/install.c:875) SourceRootDir: 0x00540D20 \reactos
-(base/setup/lib/install.c:876) SourcePath: 0x00540CE8 \Device\CdRom0\reactos
-(base/setup/lib/install.c:877) SystemRootPath: 0x00000000
-(base/setup/lib/install.c:878) DestinationArcPath: 0x00547920 multi(0)disk(0)rdisk(0)partition(1)\ReactOS
-(base/setup/lib/install.c:879) DestinationPath: 0x00547980 \Device\Harddisk0\Partition1\ReactOS
-(base/setup/lib/install.c:880) DestinationRootPath: 0x005478D8 \Device\Harddisk0\Partition1\
-(base/setup/lib/install.c:881) InstallPath: 0x005479D8 \ReactOS
-*/
-
-static NTSTATUS
-IndexOEMFolders(IN OUT PUSETUP_DATA pSetupData)
+static
+NTSTATUS
+IndexOEMFolders(
+    IN OUT PUSETUP_DATA pSetupData)
 {
     HANDLE hOEMDir;
     NTSTATUS status;
     WCHAR wszOEMDirPath[MAX_PATH];
 
-    DPRINT1("SourceRootPath: 0x%08X %ws\r\n", pSetupData->SourceRootPath.Buffer, pSetupData->SourceRootPath.Buffer);
-    DPRINT1("SourceRootDir: 0x%08X %ws\r\n", pSetupData->SourceRootDir.Buffer, pSetupData->SourceRootDir.Buffer);
-    DPRINT1("SourcePath: 0x%08X %ws\r\n", pSetupData->SourcePath.Buffer, pSetupData->SourcePath.Buffer);
-    DPRINT1("SystemRootPath: 0x%08X\r\n", pSetupData->SystemRootPath.Buffer);
-    DPRINT1("DestinationArcPath: 0x%08X %ws\r\n", pSetupData->DestinationArcPath.Buffer, pSetupData->DestinationArcPath.Buffer);
-    DPRINT1("DestinationPath: 0x%08X %ws\r\n", pSetupData->DestinationPath.Buffer, pSetupData->DestinationPath.Buffer);
-    DPRINT1("DestinationRootPath: 0x%08X %ws\r\n", pSetupData->DestinationRootPath.Buffer, pSetupData->DestinationRootPath.Buffer);
-    DPRINT1("InstallPath: 0x%08X %ws\r\n", pSetupData->InstallPath.Buffer, pSetupData->InstallPath.Buffer);
-
-    status = CombinePaths(wszOEMDirPath, ARRAYSIZE(wszOEMDirPath), 2, pSetupData->SourceRootPath.Buffer, L"\\$OEM$");
+    status = CombinePaths(wszOEMDirPath,
+                          ARRAYSIZE(wszOEMDirPath),
+                          2,
+                          pSetupData->SourceRootPath.Buffer,
+                          L"\\$OEM$");
     if (FAILED(status))
     {
-        DPRINT1("Error combining paths 0x%08X and 0x%08X\r\n", pSetupData->SourceRootPath.Buffer, L"\\$OEM$");
+        DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
+                pSetupData->SourceRootPath.Buffer,
+                L"\\$OEM$");
         return status;
     }
 
     // Check if $OEM$ exists - exit function if it doesn't
     status = OpenOEMSourceFolder(&hOEMDir, wszOEMDirPath);
     if (status == STATUS_NO_SUCH_FILE)
-        return STATUS_SUCCESS; // No $OEM$ folder
+    {
+        // No $OEM$ folder
+        return STATUS_SUCCESS;
+    }
     else if (FAILED(status))
     {
-        DPRINT1("Error 0x%08X opening OEM source folder 0x%08X\r\n", status, wszOEMDirPath);
+        DPRINT1("Error 0x%08X opening OEM source folder 0x%p\r\n", status, wszOEMDirPath);
         return status;
     }
 
@@ -915,9 +910,9 @@ IndexOEMFolders(IN OUT PUSETUP_DATA pSetupData)
     status = IndexOEMSubfolder(pSetupData, L"\\$$", pSetupData->DestinationPath.Buffer);
     if (FAILED(status) && (status != STATUS_NO_SUCH_FILE))
     {
-        DPRINT1(
-            "Error 0x%08X indexing OEM subfolder \\$$ with destination 0x%08X\r\n", status,
-            pSetupData->DestinationPath.Buffer);
+        DPRINT1("Error 0x%08X indexing OEM subfolder \\$OEM$\\$$ with destination 0x%p\r\n",
+                status,
+                pSetupData->DestinationPath.Buffer);
         return status;
     }
 
@@ -925,17 +920,21 @@ IndexOEMFolders(IN OUT PUSETUP_DATA pSetupData)
     status = IndexOEMSubfolder(pSetupData, L"\\$1", pSetupData->DestinationRootPath.Buffer);
     if ((status != STATUS_SUCCESS) && (status != STATUS_NO_SUCH_FILE))
     {
-        DPRINT1(
-            "Error 0x%08X indexing OEM subfolder \\$1 with destination 0x%08X\r\n", status,
-            pSetupData->DestinationPath.Buffer);
+        DPRINT1("Error 0x%08X indexing OEM subfolder \\$OEM$\\$1 with destination 0x%p\r\n",
+                status,
+                pSetupData->DestinationPath.Buffer);
         return status;
     }
 
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS
-IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, IN PCWSTR pcwzDestPath)
+static
+NTSTATUS
+IndexOEMSubfolder(
+    IN OUT PUSETUP_DATA pSetupData,
+    IN PCWSTR pcwzSrcFolderName,
+    IN PCWSTR pcwzDestPath)
 {
     HANDLE hDir;
     NTSTATUS status;
@@ -949,20 +948,28 @@ IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, I
 
     pinfEntry = (PFILE_DIRECTORY_INFORMATION)&arrEntryInfoData[0];
 
-    status = CombinePaths(
-        wszSrcPath, ARRAYSIZE(wszSrcPath), 3, pSetupData->SourceRootPath.Buffer, L"\\$OEM$\\", pcwzSrcFolderName);
+    status = CombinePaths(wszSrcPath,
+                          ARRAYSIZE(wszSrcPath),
+                          3,
+                          pSetupData->SourceRootPath.Buffer,
+                          L"\\$OEM$\\",
+                          pcwzSrcFolderName);
     if (status != STATUS_SUCCESS)
     {
-        DPRINT1(
-            "Error combining paths 0x%08X, 0x%08X, and 0x%08X\r\n", pSetupData->SourceRootPath.Buffer, L"\\$OEM$\\",
-            pcwzSrcFolderName);
+        DPRINT1("Error combining paths 0x%p, 0x%p, and 0x%p\r\n",
+                pSetupData->SourceRootPath.Buffer,
+                L"\\$OEM$\\",
+                pcwzSrcFolderName);
         return status;
     }
 
+    // Create the destination folder right now because SetupCommitFileQueueW does not do so
+    // (See \base\setup\usetup\spapisup\fileqsup.c line 900)
+    // In a way, it makes sense to do it here, since we are already traversing the directory tree.
     status = CreateOEMDestFolder(pcwzDestPath);
     if (status != STATUS_SUCCESS)
     {
-        DPRINT1("Error 0x%08X creating OEM destination folder 0x%08X\r\n", status, pcwzDestPath);
+        DPRINT1("Error 0x%08X creating OEM destination folder 0x%p\r\n", status, pcwzDestPath);
         return status;
     }
 
@@ -970,9 +977,17 @@ IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, I
     if (status == STATUS_SUCCESS)
     {
         // Loop through all items (files and directories) in the folder
-        while ((status = NtQueryDirectoryFile(
-                hDir, NULL, NULL, NULL, &iosb, pinfEntry, sizeof(arrEntryInfoData), FileDirectoryInformation, TRUE,
-                NULL, FALSE)) == STATUS_SUCCESS)
+        while ((status = NtQueryDirectoryFile(hDir,
+                                              NULL,
+                                              NULL,
+                                              NULL,
+                                              &iosb,
+                                              pinfEntry,
+                                              sizeof(arrEntryInfoData),
+                                              FileDirectoryInformation,
+                                              TRUE,
+                                              NULL,
+                                              FALSE)) == STATUS_SUCCESS)
         {
             // Other statuses indicate there are no more files
             if (iosb.Status != STATUS_SUCCESS)
@@ -983,7 +998,7 @@ IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, I
             if ((UINT_PTR)(&pinfEntry->FileName[nNameLengthChars]) >
                 (UINT_PTR)(&arrEntryInfoData[sizeof(arrEntryInfoData)]))
             {
-                DPRINT1("Filename 0x%08X too long to null terminate\r\n", pinfEntry->FileName);
+                DPRINT1("Filename 0x%p too long to null terminate\r\n", pinfEntry->FileName);
                 status = STATUS_NAME_TOO_LONG;
                 break;
             }
@@ -1001,41 +1016,60 @@ IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, I
             {
                 // Subdirectory
 
-                status = CombinePaths(
-                    wszSubdirSrcName, ARRAYSIZE(wszSubdirSrcName), 2, pcwzSrcFolderName, pinfEntry->FileName);
+                status = CombinePaths(wszSubdirSrcName,
+                                      ARRAYSIZE(wszSubdirSrcName),
+                                      2,
+                                      pcwzSrcFolderName,
+                                      pinfEntry->FileName);
                 if (status != STATUS_SUCCESS)
                 {
-                    DPRINT1("Error combining paths 0x%08X and 0x%08X\r\n", pcwzSrcFolderName, pinfEntry->FileName);
+                    DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
+                            pcwzSrcFolderName,
+                            pinfEntry->FileName);
                     break;
                 }
 
-                status = CombinePaths(
-                    wszSubdirDestPath, ARRAYSIZE(wszSubdirDestPath), 2, pcwzDestPath, pinfEntry->FileName);
+                status = CombinePaths(wszSubdirDestPath,
+                                      ARRAYSIZE(wszSubdirDestPath),
+                                      2,
+                                      pcwzDestPath,
+                                      pinfEntry->FileName);
                 if (status != STATUS_SUCCESS)
                 {
-                    DPRINT1("Error combining paths 0x%08X and 0x%08X\r\n", pcwzDestPath, pinfEntry->FileName);
+                    DPRINT1("Error combining paths 0x%p and 0x%p\r\n",
+                            pcwzDestPath,
+                            pinfEntry->FileName);
                     break;
                 }
 
                 status = IndexOEMSubfolder(pSetupData, wszSubdirSrcName, wszSubdirDestPath);
                 if (status != STATUS_SUCCESS)
                 {
-                    DPRINT1(
-                        "Error 0x%08X indexing OEM subfolder 0x%08X with destination 0x%08X\r\n", status, wszSubdirSrcName,
-                        wszSubdirDestPath);
+                    DPRINT1("Error 0x%08X indexing OEM subfolder 0x%p with destination 0x%p\r\n",
+                            status,
+                            wszSubdirSrcName,
+                            wszSubdirDestPath);
                     break;
                 }
             }
             else
             {
                 // File
-                if (!SpFileQueueCopy(
-                        pSetupData->SetupFileQueue, wszSrcPath, NULL, pinfEntry->FileName, NULL, NULL, NULL,
-                        pcwzDestPath, pinfEntry->FileName, 0))
+                if (!SpFileQueueCopy(pSetupData->SetupFileQueue,
+                                     wszSrcPath,
+                                     NULL,
+                                     pinfEntry->FileName,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     pcwzDestPath,
+                                     pinfEntry->FileName,
+                                     0))
                 {
-                    DPRINT1(
-                        "Error queueing OEM file 0x%08X for copy from 0x%08X to 0x%08X\r\n", pinfEntry->FileName, wszSrcPath,
-                        pcwzDestPath);
+                    DPRINT1("Error queueing OEM file 0x%p for copy from 0x%p to 0x%p\r\n",
+                            pinfEntry->FileName,
+                            wszSrcPath,
+                            pcwzDestPath);
                     status = STATUS_PRINT_QUEUE_FULL; // Suggestions welcome
                     break;
                 }
@@ -1046,18 +1080,21 @@ IndexOEMSubfolder(IN OUT PUSETUP_DATA pSetupData, IN PCWSTR pcwzSrcFolderName, I
         if (status == STATUS_NO_MORE_FILES)
             status = STATUS_SUCCESS;
         else
-            DPRINT1("Error 0x%08X querying OEM source folder 0x%08X\r\n", status, wszSrcPath);
+            DPRINT1("Error 0x%08X querying OEM source folder 0x%p\r\n", status, wszSrcPath);
     }
     else
     {
-        DPRINT1("Error 0x%08X opening OEM source folder 0x%08X\r\n", status, wszSrcPath);
+        DPRINT1("Error 0x%08X opening OEM source folder 0x%p\r\n", status, wszSrcPath);
     }
 
     return status;
 }
 
-static NTSTATUS
-OpenOEMSourceFolder(OUT PHANDLE pHandle, IN PCWSTR pcwzPath)
+static
+NTSTATUS
+OpenOEMSourceFolder(
+    OUT PHANDLE pHandle,
+    IN PCWSTR pcwzPath)
 {
     OBJECT_ATTRIBUTES attrOEMDir;
     UNICODE_STRING usOEMDirPath;
@@ -1065,17 +1102,26 @@ OpenOEMSourceFolder(OUT PHANDLE pHandle, IN PCWSTR pcwzPath)
     NTSTATUS status;
 
     RtlInitUnicodeString(&usOEMDirPath, pcwzPath);
-    InitializeObjectAttributes(&attrOEMDir, &usOEMDirPath, OBJ_OPENIF | OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&attrOEMDir,
+                               &usOEMDirPath,
+                               OBJ_OPENIF | OBJ_CASE_INSENSITIVE,
+                               NULL,
+                               NULL);
 
-    status = NtOpenFile(
-        pHandle, FILE_DIRECTORY_FILE | FILE_LIST_DIRECTORY | SYNCHRONIZE, &attrOEMDir, &iosb, FILE_SHARE_VALID_FLAGS,
-        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT);
+    status = NtOpenFile(pHandle,
+                        FILE_DIRECTORY_FILE | FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                        &attrOEMDir,
+                        &iosb,
+                        FILE_SHARE_VALID_FLAGS,
+                        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT);
 
     return status;
 }
 
-static NTSTATUS
-CreateOEMDestFolder(IN PCWSTR pcwzPath)
+static
+NTSTATUS
+CreateOEMDestFolder(
+    IN PCWSTR pcwzPath)
 {
     OBJECT_ATTRIBUTES attrDir;
     UNICODE_STRING usDirPath;
@@ -1084,11 +1130,23 @@ CreateOEMDestFolder(IN PCWSTR pcwzPath)
     HANDLE hDir;
 
     RtlInitUnicodeString(&usDirPath, pcwzPath);
-    InitializeObjectAttributes(&attrDir, &usDirPath, OBJ_OPENIF | OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&attrDir,
+                               &usDirPath,
+                               OBJ_OPENIF | OBJ_CASE_INSENSITIVE,
+                               NULL,
+                               NULL);
 
-    status = NtCreateFile(
-        &hDir, FILE_LIST_DIRECTORY | SYNCHRONIZE, &attrDir, &iosb, NULL, FILE_ATTRIBUTE_DIRECTORY,
-        FILE_SHARE_VALID_FLAGS, FILE_OPEN_IF, FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+    status = NtCreateFile(&hDir,
+                          FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                          &attrDir,
+                          &iosb,
+                          NULL,
+                          FILE_ATTRIBUTE_DIRECTORY,
+                          FILE_SHARE_VALID_FLAGS,
+                          FILE_OPEN_IF,
+                          FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                          NULL,
+                          0);
 
     if (SUCCEEDED(status))
         NtClose(hDir);
