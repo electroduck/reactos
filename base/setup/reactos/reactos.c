@@ -34,6 +34,8 @@
 #define NDEBUG
 #include <debug.h>
 
+#include <winnls.h>
+
 /* GLOBALS ******************************************************************/
 
 HANDLE ProcessHeap;
@@ -1086,6 +1088,267 @@ FileCopyCallback(PVOID Context,
     return FILEOP_DOIT;
 }
 
+static
+void
+GetErrorMessage(
+    DWORD nErrorCode,
+    OUT LPWSTR pwzBuffer,
+    SIZE_T nBufferChars)
+{
+    DWORD nMessageChars;
+
+    nMessageChars = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                   NULL,
+                                   nErrorCode,
+                                   GetUserDefaultUILanguage(),
+                                   pwzBuffer,
+                                   nBufferChars,
+                                   NULL);
+
+    if (nMessageChars == 0)
+        lstrcpynW(pwzBuffer, L"Unknown error", nBufferChars);
+}
+
+static
+int
+ShowCommandErrorMessage(
+    HWND hwndDialog,
+    DWORD nErrorCode,
+    IN PWSTR pwszCommand,
+    IN PWSTR pwszFormat)
+{
+    WCHAR wszSystemError[256];
+    WCHAR wszErrorMessage[512];
+
+    GetErrorMessage(nErrorCode, wszSystemError, ARRAYSIZE(wszSystemError));
+    _snwprintf(wszErrorMessage, ARRAYSIZE(wszErrorMessage), pwszFormat, nErrorCode,
+        pwszCommand, wszSystemError);
+
+    return MessageBoxW(hwndDialog, wszErrorMessage, L"Error running OEM command", MB_ICONERROR | MB_ABORTRETRYIGNORE);
+}
+
+static
+int
+ShowCommandFailedMessage(
+    HWND hwndDialog,
+    DWORD nExitCode,
+    IN PWSTR pwszCommand)
+{
+    WCHAR wszErrorMessage[512];
+
+    _snwprintf(
+        wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Command \"%ls\" exited with code %u (%08X)", pwszCommand,
+        nExitCode, nExitCode);
+
+    return MessageBoxW(hwndDialog, wszErrorMessage, L"Error running OEM command", MB_ICONERROR | MB_ABORTRETRYIGNORE);
+}
+
+static
+DWORD
+RunOEMCommandLines(
+    IN PSETUPDATA pSetupData,
+    HWND hwndDialog,
+    HWND hwndProgressBar)
+{
+    WCHAR wszOEMFolderPath[MAX_PATH];
+    WCHAR wszCmdlinesFilePath[MAX_PATH];
+    NTSTATUS status;
+    HANDLE hCmdlinesFile;
+    DWORD nLastError, nMaxChars, nChars, nCommandExitCode;
+    LARGE_INTEGER liCmdlinesSize;
+    PWSTR pwszCommands, pwszCurCommand, pwszCommandsEnd;
+    STARTUPINFOW infStartup;
+    PROCESS_INFORMATION infProcess;
+
+    /* Get path to OEM folder */
+    status = CombinePaths(wszOEMFolderPath,
+                          ARRAYSIZE(wszOEMFolderPath),
+                          2,
+                          pSetupData->USetupData.SourceRootPath,
+                          L"\\$OEM$");
+    if (status != STATUS_SUCCESS)
+        return RtlNtStatusToDosError(status);
+
+    /* Get path to CMDLINES.TXT */
+    status = CombinePaths(wszCmdlinesFilePath,
+                          ARRAYSIZE(wszCmdlinesFilePath),
+                          2,
+                          wszOEMFolderPath,
+                          L"\\CMDLINES.TXT");
+    if (status != STATUS_SUCCESS)
+        return RtlNtStatusToDosError(status);
+
+    /* Try to open CMDLINES.TXT */
+    hCmdlinesFile = CreateFileW(wszCmdlinesFilePath,
+                                GENERIC_READ,
+                                FILE_SHARE_READ,
+                                NULL,
+                                OPEN_EXISTING,
+                                0,
+                                NULL);
+    if (hCmdlinesFile == INVALID_HANDLE_VALUE)
+    {
+        nLastError = GetLastError();
+        if (nLastError == ERROR_FILE_NOT_FOUND)
+            return ERROR_SUCCESS; // We just don't have one. That's OK.
+        else
+            return nLastError;
+    }
+
+    /* Determine the total size of the file */
+    if (!GetFileSizeEx(hCmdlinesFile, &liCmdlinesSize))
+    {
+        nLastError = GetLastError();
+        CloseHandle(hCmdlinesFile);
+        return nLastError;
+    }
+
+    /* Close that handle since we'll use the INI functions to read it */
+    CloseHandle(hCmdlinesFile);
+    hCmdlinesFile = NULL;
+
+    /* Make sure file size is below 1MB - more than that can't possibly be right */
+    if ((liCmdlinesSize.HighPart != 0) || (liCmdlinesSize.LowPart > (1024 * 1024)))
+        return ERROR_FILE_TOO_LARGE;
+
+    /* Allocate space for command lines */
+    nMaxChars = liCmdlinesSize.LowPart;
+    pwszCommands = HeapAlloc(ProcessHeap, 0, nMaxChars * sizeof(WCHAR));
+    if (!pwszCommands)
+        return GetLastError();
+
+    /* Read the command lines */
+    nChars = GetPrivateProfileSectionW(L"COMMANDS", pwszCommands, nMaxChars, wszCmdlinesFilePath);
+    pwszCommandsEnd = pwszCommands + nChars;
+
+    /* Iterate through commands */
+    for (pwszCurCommand = pwszCommands;
+         pwszCurCommand < pwszCommandsEnd;
+         pwszCurCommand += lstrlenW(pwszCurCommand))
+    {
+    L_retry:
+        ZeroMemory(&infStartup, sizeof(infStartup));
+        ZeroMemory(&infProcess, sizeof(infProcess));
+
+        SetDlgItemTextW(hwndDialog, IDC_ITEM, pwszCurCommand);
+
+        /* Start command */
+        if (!CreateProcessW(NULL,
+                            pwszCurCommand,
+                            NULL,
+                            NULL,
+                            FALSE,
+                            0,
+                            NULL,
+                            wszOEMFolderPath,
+                            &infStartup,
+                            &infProcess))
+        {
+            nLastError = GetLastError();
+            CloseHandle(infProcess.hProcess);
+            CloseHandle(infProcess.hThread);
+
+            switch (ShowCommandErrorMessage(hwndDialog, nLastError, pwszCurCommand, L"Error 0x%08X starting command \"%ls\": %ls"))
+            {
+                case IDABORT:
+                    return ERROR_REQUEST_ABORTED;
+
+                case IDRETRY:
+                    goto L_retry;
+
+                case IDIGNORE:
+                default:
+                    continue;
+            }
+        }
+
+        CloseHandle(infProcess.hThread);
+        infProcess.hThread = NULL;
+
+        /* Wait for command to exit */
+        if (WaitForSingleObject(infProcess.hProcess, INFINITE) != WAIT_OBJECT_0)
+        {
+            nLastError = GetLastError();
+            CloseHandle(infProcess.hProcess);
+
+            switch (ShowCommandErrorMessage(
+                hwndDialog, nLastError, pwszCurCommand, L"Error 0x%08X waiting for command \"%ls\" to exit: %ls"))
+            {
+                case IDABORT:
+                    return ERROR_REQUEST_ABORTED;
+
+                case IDRETRY:
+                    goto L_retry;
+
+                case IDIGNORE:
+                default:
+                    continue;
+            }
+        }
+
+        /* Get exit code */
+        if (!GetExitCodeProcess(infProcess.hProcess, &nCommandExitCode))
+        {
+            nLastError = GetLastError();
+            CloseHandle(infProcess.hProcess);
+
+            switch (ShowCommandErrorMessage(
+                hwndDialog, nLastError, pwszCurCommand, L"Error 0x%08X getting exit code from command \"%ls\": %ls"))
+            {
+                case IDABORT:
+                    return ERROR_REQUEST_ABORTED;
+
+                case IDRETRY:
+                    goto L_retry;
+
+                case IDIGNORE:
+                default:
+                    continue;
+            }
+        }
+
+        CloseHandle(infProcess.hProcess);
+        infProcess.hProcess = NULL;
+
+        /* Check exit code */
+        if (nCommandExitCode != 0)
+        {
+            switch (ShowCommandFailedMessage(hwndDialog, nCommandExitCode, pwszCurCommand))
+            {
+                case IDABORT:
+                    return ERROR_REQUEST_ABORTED;
+
+                case IDRETRY:
+                    goto L_retry;
+
+                case IDIGNORE:
+                default:
+                    continue;
+            }
+        }
+    }
+
+    return ERROR_SUCCESS;
+}
+
+static
+void
+ShowGenericErrorMessage(
+    HWND hwndParent,
+    DWORD nErrorCode,
+    PCWSTR pcwzContext)
+{
+    WCHAR wszSystemError[256];
+    WCHAR wszErrorMessage[512];
+
+    GetErrorMessage(nErrorCode, wszSystemError, ARRAYSIZE(wszSystemError));
+    _snwprintf(
+        wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X while %ls: %ls", nErrorCode, pcwzContext,
+        wszSystemError);
+
+    MessageBoxW(hwndParent, wszErrorMessage, L"Error installing ReactOS", MB_ICONERROR);
+}
+
 static DWORD
 WINAPI
 PrepareAndDoCopyThread(
@@ -1098,6 +1361,7 @@ PrepareAndDoCopyThread(
     // ERROR_NUMBER ErrorNumber;
     BOOLEAN Success;
     COPYCONTEXT CopyContext;
+    DWORD dwError;
 
     /* Retrieve pointer to the global setup data */
     pSetupData = (PSETUPDATA)GetWindowLongPtrW(hwndDlg, GWLP_USERDATA);
@@ -1183,6 +1447,26 @@ PrepareAndDoCopyThread(
             PropSheet_SetWizButtons(GetParent(hwndDlg), PSWIZB_NEXT);
         return 1;
     }
+
+    /*
+     * Run OEM command lines
+     */
+
+    /* Set status text */
+    SetDlgItemTextW(hwndDlg, IDC_ACTIVITY, L"Executing OEM commands...");
+    SetDlgItemTextW(hwndDlg, IDC_ITEM, L"");
+
+    /* Run command lines */
+    dwError = RunOEMCommandLines(pSetupData, hwndDlg, hWndProgress);
+    if (dwError != ERROR_SUCCESS)
+    {
+        ShowGenericErrorMessage(hwndDlg, dwError, L"executing OEM commands");
+        return 1;
+    }
+
+    /*
+     * Finalize install
+     */
 
     /* Set status text */
     SetDlgItemTextW(hwndDlg, IDC_ACTIVITY, L"Finalizing the installation...");
