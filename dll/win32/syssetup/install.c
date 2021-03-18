@@ -1294,10 +1294,14 @@ InstallReactOS(VOID)
     HKEY hKey;
     HINF hShortcutsInf;
     HANDLE hHotkeyThread;
-    BOOL ret;
+    BOOL ret, bHasOEMFolder;
 
     InitializeSetupActionLog(FALSE);
     LogItem(NULL, L"Installing ReactOS");
+
+    bHasOEMFolder = FindOEMFolder();
+    if (bHasOEMFolder)
+        LogItem(NULL, L"Found OEM folder");
 
     CreateTempDir(L"TEMP");
     CreateTempDir(L"TMP");
@@ -1382,6 +1386,9 @@ InstallReactOS(VOID)
     InstallSecurity();
 
     SetAutoAdminLogon();
+
+    if (bHasOEMFolder)
+        ExecuteOEMCommands();
 
     hShortcutsInf = SetupOpenInfFileW(L"shortcuts.inf",
                                       NULL,

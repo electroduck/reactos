@@ -12,6 +12,7 @@ list(APPEND SOURCE
     proppage.c
     security.c
     wizard.c
+	oem.c
     precomp.h
     ${CMAKE_CURRENT_BINARY_DIR}/syssetup_stubs.c)
 

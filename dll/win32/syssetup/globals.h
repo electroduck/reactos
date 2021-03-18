@@ -49,4 +49,12 @@ SetAutoAdminLogon(VOID);
 /* wizard.c */
 VOID InstallWizard (VOID);
 
+/* oem.c */
+
+BOOL
+FindOEMFolder(void);
+
+void
+ExecuteOEMCommands(void);
+
 /* EOF */
