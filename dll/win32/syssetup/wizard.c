@@ -1967,9 +1967,21 @@ RegistrationProc(LPVOID Parameter)
         }
     }
 
+    RegistrationNotify.Progress = RegistrationData->DllCount;
+    RegistrationNotify.ActivityID = IDS_REGISTERING_COMPONENTS;
+    RegistrationNotify.CurrentItem = NULL;
+    SendMessage(RegistrationData->hwndDlg, PM_REGISTRATION_NOTIFY, 0, (LPARAM)&RegistrationNotify);
+    if (NULL != RegistrationNotify.ErrorMessage && UnknownError != RegistrationNotify.ErrorMessage)
+    {
+        LocalFree((PVOID)RegistrationNotify.ErrorMessage);
+        RegistrationNotify.ErrorMessage = NULL;
+    }
+
     RegisterTypeLibraries(hSysSetupInf, L"TypeLibraries");
 
     // This is currently the best place to run the OEM commands.
+    RegistrationNotify.CurrentItem = L"Executing OEM commands"; // TODO: Localize
+    SendMessage(RegistrationData->hwndDlg, PM_REGISTRATION_NOTIFY, 0, (LPARAM)&RegistrationNotify);
     if (FindOEMFolder())
         ExecuteOEMCommands();
 
@@ -1979,14 +1991,8 @@ RegistrationProc(LPVOID Parameter)
     // Notify the dialog that we have finished.
     // After sending this message, do not attempt to do any more setup tasks on this thread.
     // The system may reboot in the middle of them!
-    RegistrationNotify.Progress = RegistrationData->DllCount;
-    RegistrationNotify.ActivityID = IDS_REGISTERING_COMPONENTS;
     RegistrationNotify.CurrentItem = NULL;
     SendMessage(RegistrationData->hwndDlg, PM_REGISTRATION_NOTIFY, 1, (LPARAM)&RegistrationNotify);
-    if (NULL != RegistrationNotify.ErrorMessage && UnknownError != RegistrationNotify.ErrorMessage)
-    {
-        LocalFree((PVOID)RegistrationNotify.ErrorMessage);
-    }
 
     SetupTermDefaultQueueCallback(RegistrationData->DefaultContext);
     HeapFree(GetProcessHeap(), 0, RegistrationData);
