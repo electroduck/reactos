@@ -18,11 +18,17 @@ typedef BOOL (WINAPI* SHELLEXECPROC)(LPSHELLEXECUTEINFOW pExecInfo);
 typedef void (WINAPI* SHCHANGENOTIFYPROC)(LONG nEventID, UINT flags, LPCVOID pItem1, LPCVOID pItem2);
 typedef LPWSTR* (WINAPI* CMDLINE2ARGVPROC)(IN LPCWSTR pcwzCommandLine, OUT int* pnArgc);
 
-static void
-GetErrorMessage(DWORD nErrorCode, OUT LPWSTR pwzBuffer, SIZE_T nBufferChars);
+static
+void
+GetErrorMessage(
+    DWORD nErrorCode,
+    OUT LPWSTR pwzBuffer,
+    SIZE_T nBufferChars);
 
-static HANDLE
-RunCommand(IN LPCWSTR pcwzCommand, IN LPCWSTR pcwzWorkingDirectory);
+static
+HANDLE
+RunCommand(IN LPCWSTR pcwzCommand,
+    IN LPCWSTR pcwzWorkingDirectory);
 
 static const WCHAR CommandsSection[] = L"COMMANDS";
 static WCHAR OEMFolderPath[MAX_PATH];
@@ -44,7 +50,10 @@ FindOEMFolder(void)
     // Try all lettered drives
     for (wcDriveLetter = 'A'; wcDriveLetter <= 'Z'; wcDriveLetter++)
     {
-        _snwprintf(wszCurrentAttempt, ARRAYSIZE(wszCurrentAttempt) - 1, L"%wc:\\$OEM$\\", wcDriveLetter);
+        _snwprintf(wszCurrentAttempt,
+                   ARRAYSIZE(wszCurrentAttempt) - 1,
+                   L"%wc:\\$OEM$\\",
+                   wcDriveLetter);
 
         // See if the OEM folder exists on this drive
         dwAttributes = GetFileAttributesW(wszCurrentAttempt);
@@ -107,8 +116,12 @@ ExecuteOEMCommands(void)
     ZeroMemory(wszErrorMessage, sizeof(wszErrorMessage));
     ZeroMemory(wszCommandLine, sizeof(wszCommandLine));
 
-    wcsncpy(wszCommandsFile, OEMFolderPath, ARRAYSIZE(wszCommandsFile) - 1);
-    wcsncat(wszCommandsFile, L"CMDLINES.TXT", ARRAYSIZE(wszCommandsFile) - wcslen(wszCommandsFile) - 1);
+    wcsncpy(wszCommandsFile,
+            OEMFolderPath,
+            ARRAYSIZE(wszCommandsFile) - 1);
+    wcsncat(wszCommandsFile,
+            L"CMDLINES.TXT",
+            ARRAYSIZE(wszCommandsFile) - wcslen(wszCommandsFile) - 1);
 
     // Open CMDLINES.TXT - style must be set to OLDNT, not WIN4
     hCommandsInf = SetupOpenInfFileW(wszCommandsFile, NULL, INF_STYLE_OLDNT, &nErrorLine);
@@ -121,9 +134,16 @@ ExecuteOEMCommands(void)
         GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
 
         if (nErrorCode == ERROR_OUTOFMEMORY)
-            wcsncpy(wszErrorMessage, L"Ran out ot memory while processing CMDLINES.TXT", ARRAYSIZE(wszErrorMessage));
+            wcsncpy(wszErrorMessage,
+                    L"Ran out ot memory while processing CMDLINES.TXT",
+                    ARRAYSIZE(wszErrorMessage));
         else
-            _snwprintf(wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X on line %u of CMDLINES.TXT: %ws", nErrorCode, nErrorLine, wszSysError);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Error 0x%08X on line %u of CMDLINES.TXT: %ws",
+                       nErrorCode,
+                       nErrorLine,
+                       wszSysError);
 
         MessageBoxW(NULL, wszErrorMessage, L"Error reading CMDLINES.TXT", MB_ICONERROR);
         return;
@@ -133,7 +153,6 @@ ExecuteOEMCommands(void)
     nCommands = SetupGetLineCountW(hCommandsInf, CommandsSection);
     if (nCommands <= 0)
     {
-        //DbgPrint("CMDLINES.TXT contains no commands (SetupGetLineCountW returned %d).\r\n", nCommands);
         SetupCloseInfFile(hCommandsInf);
         return;
     }
@@ -147,20 +166,32 @@ ExecuteOEMCommands(void)
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X finding command line %d: %ls", nErrorCode,
-                nCurCommand, wszSysError);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Error 0x%08X finding command line %d: %ls",
+                       nErrorCode,
+                       nCurCommand,
+                       wszSysError);
             goto L_error;
         }
 
         // Get line data
-        if (!SetupGetLineTextW(&ctxCurCommand, NULL, NULL, NULL, wszCommandLine, ARRAYSIZE(wszCommandLine), NULL))
+        if (!SetupGetLineTextW(&ctxCurCommand,
+                               NULL,
+                               NULL,
+                               NULL,
+                               wszCommandLine,
+                               ARRAYSIZE(wszCommandLine),
+                               NULL))
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X reading text of command line %d: %ls", nErrorCode,
-                nCurCommand, wszSysError);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Error 0x%08X reading text of command line %d: %ls",
+                       nErrorCode,
+                       nCurCommand,
+                       wszSysError);
             goto L_error;
         }
 
@@ -171,9 +202,12 @@ ExecuteOEMCommands(void)
             case (UINT_PTR)INVALID_HANDLE_VALUE: // Error
                 nErrorCode = GetLastError();
                 GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-                _snwprintf(
-                    wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X executing command %d: %ls",
-                    nErrorCode, nCurCommand, wszSysError);
+                _snwprintf(wszErrorMessage,
+                           ARRAYSIZE(wszErrorMessage) - 1,
+                           L"Error 0x%08X executing command %d: %ls",
+                           nErrorCode,
+                           nCurCommand,
+                           wszSysError);
                 goto L_error;
 
             case (UINT_PTR)NULL: // No process needed to be started
@@ -188,9 +222,12 @@ ExecuteOEMCommands(void)
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X waiting for command %d to exit: %ls", nErrorCode,
-                nCurCommand, wszSysError);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Error 0x%08X waiting for command %d to exit: %ls",
+                       nErrorCode,
+                       nCurCommand,
+                       wszSysError);
             goto L_error;
         }
 
@@ -200,18 +237,23 @@ ExecuteOEMCommands(void)
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X getting exit code for command %d: %ls",
-                nErrorCode, nCurCommand, wszSysError);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Error 0x%08X getting exit code for command %d: %ls",
+                       nErrorCode,
+                       nCurCommand,
+                       wszSysError);
             goto L_error;
         }
 
         // Check exit code
         if (nExitCode != 0)
         {
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Command %d exited with code %u.", nCurCommand,
-                nExitCode);
+            _snwprintf(wszErrorMessage,
+                       ARRAYSIZE(wszErrorMessage) - 1,
+                       L"Command %d exited with code %u.",
+                       nCurCommand,
+                       nExitCode);
             goto L_error;
         }
         #endif
@@ -219,7 +261,10 @@ ExecuteOEMCommands(void)
         goto L_loopclose;
 
     L_error:
-        switch (MessageBoxW(NULL, wszErrorMessage, L"Error processing OEM commands", MB_ICONERROR | MB_ABORTRETRYIGNORE))
+        switch (MessageBoxW(NULL,
+                            wszErrorMessage,
+                            L"Error processing OEM commands",
+                            MB_ICONERROR | MB_ABORTRETRYIGNORE))
         {
             case IDABORT:
                 SetupCloseInfFile(hCommandsInf);
@@ -253,9 +298,13 @@ GetErrorMessage(DWORD nErrorCode, OUT LPWSTR pwzBuffer, SIZE_T nBufferChars)
 {
     DWORD nMessageChars;
 
-    nMessageChars = FormatMessageW(
-        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, nErrorCode, GetUserDefaultUILanguage(),
-        pwzBuffer, nBufferChars, NULL);
+    nMessageChars = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                   NULL,
+                                   nErrorCode,
+                                   GetUserDefaultUILanguage(),
+                                   pwzBuffer,
+                                   nBufferChars,
+                                   NULL);
 
     if (nMessageChars == 0)
         lstrcpynW(pwzBuffer, L"Unknown error", nBufferChars);
