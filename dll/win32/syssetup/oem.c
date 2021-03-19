@@ -8,12 +8,15 @@
 
 #include "precomp.h"
 
-#ifndef SETUP_OEM_CDROM_MOUNT
-#define SETUP_OEM_CDROM_MOUNT 0
-#endif
+typedef BOOL (WINAPI* SHELLEXECPROC)(LPSHELLEXECUTEINFOW pExecInfo);
+typedef void (WINAPI* SHCHANGENOTIFYPROC)(LONG nEventID, UINT flags, LPCVOID pItem1, LPCVOID pItem2);
+typedef LPWSTR* (WINAPI* CMDLINE2ARGVPROC)(IN LPCWSTR pcwzCommandLine, OUT int* pnArgc);
 
 static void
 GetErrorMessage(DWORD nErrorCode, OUT LPWSTR pwzBuffer, SIZE_T nBufferChars);
+
+static HANDLE
+RunCommand(IN LPCWSTR pcwzCommand, IN LPCWSTR pcwzWorkingDirectory);
 
 static const WCHAR CommandsSection[] = L"COMMANDS";
 static WCHAR OEMFolderPath[MAX_PATH];
@@ -22,58 +25,56 @@ BOOL
 FindOEMFolder(void)
 {
     WCHAR wszCurrentAttempt[MAX_PATH];
+    WCHAR wszBestResult[MAX_PATH];
     DWORD dwAttributes;
-    unsigned nCDROM;
     WCHAR wcDriveLetter;
-#if SETUP_OEM_CDROM_MOUNT
-    WCHAR wszError[256];
-#endif
+    UINT nDriveType;
+    WCHAR wszDriveRoot[4];
 
-    // First, try CD-ROMs
-    for (nCDROM = 0; nCDROM < 32; nCDROM++)
-    {
-        _snwprintf(wszCurrentAttempt, ARRAYSIZE(wszCurrentAttempt), L"\\\\?\\GLOBALROOT\\Device\\CdRom%u\\$OEM$\\", nCDROM);
+    ZeroMemory(wszCurrentAttempt, sizeof(wszCurrentAttempt));
+    ZeroMemory(wszBestResult, sizeof(wszBestResult));
+    ZeroMemory(wszDriveRoot, sizeof(wszDriveRoot));
 
-        dwAttributes = GetFileAttributesW(wszCurrentAttempt);
-        if ((dwAttributes != INVALID_FILE_ATTRIBUTES) && (dwAttributes & FILE_ATTRIBUTE_DIRECTORY))
-        {
-            // Found it on a CD-ROM
-#if SETUP_OEM_CDROM_MOUNT
-            /* Some Win32 programs and APIs do not like NT-style Win32 paths.
-               The simplest and most robust way to convert the NT-style Win32 path to a DOS-style Win32 path is just to mount it. */
-
-            if (!DefineDosDeviceW(0, L"O:", wszCurrentAttempt))
-            {
-                _snwprintf(wszError, ARRAYSIZE(wszError), "Error 0x%08X mounting OEM folder \"%ws.\"\r\n"
-                    "OEM setup tasks will not be performed.", GetLastError(), wszCurrentAttempt);
-                MessageBoxW(NULL, wszError, L"Setup Error", MB_ICONERROR);
-                return FALSE;
-            }
-
-            wcsncpy(OEMFolderPath, L"O:\\", ARRAYSIZE(OEMFolderPath));
-            return TRUE;
-#else
-            wcsncpy(OEMFolderPath, wszCurrentAttempt, ARRAYSIZE(OEMFolderPath));
-            return TRUE;
-#endif
-        }
-    }
-
-    // Next, try all lettered drives
+    // Try all lettered drives
     for (wcDriveLetter = 'A'; wcDriveLetter <= 'Z'; wcDriveLetter++)
     {
-        _snwprintf(wszCurrentAttempt, ARRAYSIZE(wszCurrentAttempt), L"%wc:\\$OEM$\\", wcDriveLetter);
+        _snwprintf(wszCurrentAttempt, ARRAYSIZE(wszCurrentAttempt) - 1, L"%wc:\\$OEM$\\", wcDriveLetter);
 
+        // See if the OEM folder exists on this drive
         dwAttributes = GetFileAttributesW(wszCurrentAttempt);
         if ((dwAttributes != INVALID_FILE_ATTRIBUTES) && (dwAttributes & FILE_ATTRIBUTE_DIRECTORY))
         {
-            // Found it somewhere
-            wcsncpy(OEMFolderPath, wszCurrentAttempt, ARRAYSIZE(OEMFolderPath));
-            return TRUE;
+            // It does
+            wszDriveRoot[0] = wcDriveLetter;
+            wszDriveRoot[1] = L':';
+            wszDriveRoot[2] = L'\\';
+            wszDriveRoot[3] = L'\0';
+
+            // Check drive type
+            nDriveType = GetDriveTypeW(wszDriveRoot);
+            switch (nDriveType) {
+                case DRIVE_REMOVABLE:
+                case DRIVE_CDROM:
+                    // USB or CD-ROM drive - this must be it, we can stop now
+                    wcsncpy(OEMFolderPath, wszCurrentAttempt, ARRAYSIZE(OEMFolderPath));
+                    return TRUE;
+
+                default:
+                    // Other drive type - may be it, but keep looking to see if we can find a removable one instead
+                    wcsncpy(wszBestResult, wszCurrentAttempt, ARRAYSIZE(wszBestResult));
+                    break;
+            }
         }
     }
 
-    // Not found
+    // It wasn't found on a USB or CD-ROM, did we find it somewhere else?
+    if (wszBestResult[0] != '\0') {
+        // Yes we did
+        wcsncpy(OEMFolderPath, wszBestResult, ARRAYSIZE(OEMFolderPath));
+        return TRUE;
+    }
+
+    // No we didn't - not found
     return FALSE;
 }
 
@@ -89,13 +90,16 @@ ExecuteOEMCommands(void)
     LONG nCommands, nCurCommand;
     INFCONTEXT ctxCurCommand;
     WCHAR wszCommandLine[4096];
-    STARTUPINFOW infoStartup;
-    PROCESS_INFORMATION infoProcess;
+    HANDLE hCommandProcess;
 
-    ZeroMemory(&infoProcess, sizeof(infoProcess));
+    hCommandProcess = NULL;
+    ZeroMemory(wszCommandsFile, sizeof(wszCommandsFile));
+    ZeroMemory(wszSysError, sizeof(wszSysError));
+    ZeroMemory(wszErrorMessage, sizeof(wszErrorMessage));
+    ZeroMemory(wszCommandLine, sizeof(wszCommandLine));
 
-    wcsncpy(wszCommandsFile, OEMFolderPath, ARRAYSIZE(wszCommandsFile));
-    wcsncat(wszCommandsFile, L"CMDLINES.TXT", ARRAYSIZE(wszCommandsFile) - wcslen(wszCommandsFile));
+    wcsncpy(wszCommandsFile, OEMFolderPath, ARRAYSIZE(wszCommandsFile) - 1);
+    wcsncat(wszCommandsFile, L"CMDLINES.TXT", ARRAYSIZE(wszCommandsFile) - wcslen(wszCommandsFile) - 1);
 
     // Open CMDLINES.TXT - style must be set to OLDNT, not WIN4
     hCommandsInf = SetupOpenInfFileW(wszCommandsFile, NULL, INF_STYLE_OLDNT, &nErrorLine);
@@ -110,7 +114,7 @@ ExecuteOEMCommands(void)
         if (nErrorCode == ERROR_OUTOFMEMORY)
             wcsncpy(wszErrorMessage, L"Ran out ot memory while processing CMDLINES.TXT", ARRAYSIZE(wszErrorMessage));
         else
-            _snwprintf(wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X on line %u of CMDLINES.TXT: %ws", nErrorCode, nErrorLine, wszSysError);
+            _snwprintf(wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X on line %u of CMDLINES.TXT: %ws", nErrorCode, nErrorLine, wszSysError);
 
         MessageBoxW(NULL, wszErrorMessage, L"Error reading CMDLINES.TXT", MB_ICONERROR);
         return;
@@ -129,16 +133,13 @@ ExecuteOEMCommands(void)
     for (nCurCommand = 0; nCurCommand < nCommands; nCurCommand++)
     {
     L_retry:
-        ZeroMemory(&infoStartup, sizeof(infoStartup));
-        infoStartup.cb = sizeof(infoStartup);
-
         // Get line context
         if (!SetupGetLineByIndexW(hCommandsInf, CommandsSection, nCurCommand, &ctxCurCommand))
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
             _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X finding command line %d: %ls", nErrorCode,
+                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X finding command line %d: %ls", nErrorCode,
                 nCurCommand, wszSysError);
             goto L_error;
         }
@@ -149,40 +150,48 @@ ExecuteOEMCommands(void)
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
             _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X reading text of command line %d: %ls", nErrorCode,
+                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X reading text of command line %d: %ls", nErrorCode,
                 nCurCommand, wszSysError);
             goto L_error;
         }
 
         // Start command
-        if (!CreateProcessW(NULL, wszCommandLine, NULL, NULL, FALSE, 0, NULL, OEMFolderPath, &infoStartup, &infoProcess))
+        hCommandProcess = RunCommand(wszCommandLine, OEMFolderPath);
+        switch ((UINT_PTR)hCommandProcess)
         {
-            nErrorCode = GetLastError();
-            GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
-            _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X executing command %d: %ls",
-                nErrorCode, nCurCommand, wszSysError);
-            goto L_error;
+            case (UINT_PTR)INVALID_HANDLE_VALUE: // Error
+                nErrorCode = GetLastError();
+                GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
+                _snwprintf(
+                    wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X executing command %d: %ls",
+                    nErrorCode, nCurCommand, wszSysError);
+                goto L_error;
+
+            case (UINT_PTR)NULL: // No process needed to be started
+                continue; // Proceed to next command
+
+            default: // A process was started
+                break;
         }
 
         // Wait for exit
-        if (WaitForSingleObject(infoProcess.hProcess, INFINITE) != WAIT_OBJECT_0)
+        if (WaitForSingleObject(hCommandProcess, INFINITE) != WAIT_OBJECT_0)
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
             _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X waiting for command %d to exit: %ls", nErrorCode,
+                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X waiting for command %d to exit: %ls", nErrorCode,
                 nCurCommand, wszSysError);
             goto L_error;
         }
 
         // Get exit code
-        if (!GetExitCodeProcess(infoProcess.hProcess, &nExitCode))
+        if (!GetExitCodeProcess(hCommandProcess, &nExitCode))
         {
             nErrorCode = GetLastError();
             GetErrorMessage(nErrorCode, wszSysError, ARRAYSIZE(wszSysError));
             _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Error 0x%08X getting exit code for command %d: %ls",
+                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Error 0x%08X getting exit code for command %d: %ls",
                 nErrorCode, nCurCommand, wszSysError);
             goto L_error;
         }
@@ -191,19 +200,19 @@ ExecuteOEMCommands(void)
         if (nExitCode != 0)
         {
             _snwprintf(
-                wszErrorMessage, ARRAYSIZE(wszErrorMessage), L"Command %d exited with code %u.", nCurCommand,
+                wszErrorMessage, ARRAYSIZE(wszErrorMessage) - 1, L"Command %d exited with code %u.", nCurCommand,
                 nExitCode);
             goto L_error;
         }
 
-        goto L_close;
+        goto L_loopclose;
 
     L_error:
         switch (MessageBoxW(NULL, wszErrorMessage, L"Error processing OEM commands", MB_ICONERROR | MB_ABORTRETRYIGNORE))
         {
             case IDABORT:
                 SetupCloseInfFile(hCommandsInf);
-                return;
+                goto L_finalclose;
 
             case IDRETRY:
                 goto L_retry;
@@ -213,21 +222,18 @@ ExecuteOEMCommands(void)
                 break;
         }
 
-    L_close:
-        if (infoProcess.hThread)
+    L_loopclose:
+        if ((hCommandProcess) && (hCommandProcess != INVALID_HANDLE_VALUE))
         {
-            CloseHandle(infoProcess.hThread);
-            infoProcess.hThread = NULL;
-        }
-
-        if (infoProcess.hProcess)
-        {
-            CloseHandle(infoProcess.hProcess);
-            infoProcess.hProcess = NULL;
+            CloseHandle(hCommandProcess);
+            hCommandProcess = NULL;
         }
     }
 
     // Done
+L_finalclose:
+    if ((hCommandProcess) && (hCommandProcess != INVALID_HANDLE_VALUE))
+        CloseHandle(hCommandProcess);
     SetupCloseInfFile(hCommandsInf);
 }
 
@@ -242,4 +248,92 @@ GetErrorMessage(DWORD nErrorCode, OUT LPWSTR pwzBuffer, SIZE_T nBufferChars)
 
     if (nMessageChars == 0)
         lstrcpynW(pwzBuffer, L"Unknown error", nBufferChars);
+}
+
+/*
+ * Returns one of:
+ *  - A valid handle to a process, if one was started
+ *  - NULL if no process needed to be started
+ *  - INVALID_HANDLE_VALUE if an error occurred
+ */
+static HANDLE
+RunCommand(IN LPCWSTR pcwzCommand, IN LPCWSTR pcwzWorkingDirectory)
+{
+    HMODULE hShell32;
+    HANDLE hProcess;
+    DWORD nErrCode;
+    SHELLEXECPROC procShellExecuteExW;
+    CMDLINE2ARGVPROC procCommandLineToArgvW;
+    SHELLEXECUTEINFOW infoExecute;
+    PWSTR* ppwzCommandArgv;
+    int nCommandArgc;
+    size_t nFilenameLength;
+
+    nErrCode = ERROR_SUCCESS;
+    hProcess = INVALID_HANDLE_VALUE;
+
+    // Load shell32
+    hShell32 = LoadLibraryA("shell32.dll");
+    if (hShell32 == NULL)
+    {
+        nErrCode = GetLastError();
+        goto L_exit;
+    }
+
+    // Find ShellExecuteExW
+    procShellExecuteExW = (SHELLEXECPROC)GetProcAddress(hShell32, "ShellExecuteExW");
+    if (procShellExecuteExW == NULL)
+    {
+        nErrCode = GetLastError();
+        goto L_unloadshell32;
+    }
+
+    // Find CommandLineToArgvW
+    procCommandLineToArgvW = (CMDLINE2ARGVPROC)GetProcAddress(hShell32, "CommandLineToArgvW");
+    if (procCommandLineToArgvW == NULL)
+    {
+        nErrCode = GetLastError();
+        goto L_unloadshell32;
+    }
+
+    // Split command string - we need to know the file name
+    ppwzCommandArgv = procCommandLineToArgvW(pcwzCommand, &nCommandArgc);
+    if (ppwzCommandArgv == NULL)
+    {
+        nErrCode = GetLastError();
+        goto L_unloadshell32;
+    }
+
+    // Set up the ShellExecuteInfo struct
+    ZeroMemory(&infoExecute, sizeof(infoExecute));
+    infoExecute.cbSize = sizeof(infoExecute);
+    infoExecute.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_DOENVSUBST;
+    infoExecute.lpFile = ppwzCommandArgv[0];
+    infoExecute.lpParameters = pcwzCommand + wcslen(ppwzCommandArgv[0]) + 1;
+    infoExecute.lpDirectory = pcwzWorkingDirectory;
+    infoExecute.nShow = SW_SHOW;
+
+    // If present, arguments will be located in the command string after the file name
+    nFilenameLength = wcslen(ppwzCommandArgv[0]);
+    if (pcwzCommand[nFilenameLength] != L'\0')
+        infoExecute.lpParameters = pcwzCommand + nFilenameLength + 1;
+    else
+        infoExecute.lpParameters = L"";
+
+    // Start the process
+    if (!procShellExecuteExW(&infoExecute))
+    {
+        nErrCode = GetLastError();
+        goto L_freeargv;
+    }
+
+    hProcess = infoExecute.hProcess;
+
+L_freeargv:
+    LocalFree((HLOCAL)ppwzCommandArgv);
+L_unloadshell32:
+    FreeLibrary(hShell32);
+L_exit:
+    SetLastError(nErrCode);
+    return hProcess;
 }

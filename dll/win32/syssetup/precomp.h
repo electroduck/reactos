@@ -19,6 +19,7 @@
 #include <pseh/pseh2.h>
 #include <cfgmgr32.h>
 #include <winnls.h>
+#include <shellapi.h>
 
 #include "globals.h"
 #include "resource.h"
