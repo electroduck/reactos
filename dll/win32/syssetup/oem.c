@@ -8,6 +8,12 @@
 
 #include "precomp.h"
 
+// Set this to 1 for an error to be reported if any OEM command returns a nonzero exit code.
+// Windows does not do this, so by default it's disabled (0).
+#ifndef SYSSETUP_OEM_CHECK_COMMAND_RESULT
+    #define SYSSETUP_OEM_CHECK_COMMAND_RESULT 0
+#endif
+
 typedef BOOL (WINAPI* SHELLEXECPROC)(LPSHELLEXECUTEINFOW pExecInfo);
 typedef void (WINAPI* SHCHANGENOTIFYPROC)(LONG nEventID, UINT flags, LPCVOID pItem1, LPCVOID pItem2);
 typedef LPWSTR* (WINAPI* CMDLINE2ARGVPROC)(IN LPCWSTR pcwzCommandLine, OUT int* pnArgc);
@@ -86,11 +92,14 @@ ExecuteOEMCommands(void)
     UINT nErrorLine;
     WCHAR wszSysError[256];
     WCHAR wszErrorMessage[512];
-    DWORD nErrorCode, nExitCode;
+    DWORD nErrorCode;
     LONG nCommands, nCurCommand;
     INFCONTEXT ctxCurCommand;
     WCHAR wszCommandLine[4096];
     HANDLE hCommandProcess;
+    #if SYSSETUP_OEM_CHECK_COMMAND_RESULT
+    DWORD nExitCode;
+    #endif
 
     hCommandProcess = NULL;
     ZeroMemory(wszCommandsFile, sizeof(wszCommandsFile));
@@ -185,6 +194,7 @@ ExecuteOEMCommands(void)
             goto L_error;
         }
 
+        #if SYSSETUP_OEM_CHECK_COMMAND_RESULT
         // Get exit code
         if (!GetExitCodeProcess(hCommandProcess, &nExitCode))
         {
@@ -204,6 +214,7 @@ ExecuteOEMCommands(void)
                 nExitCode);
             goto L_error;
         }
+        #endif
 
         goto L_loopclose;
 
