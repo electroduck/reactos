@@ -7,5 +7,5 @@ add_library(iernonce MODULE
     ${CMAKE_CURRENT_BINARY_DIR}/iernonce.def)
 
 set_module_type(iernonce win32dll UNICODE)
-add_importlibs(iernonce msvcrt kernel32 ntdll)
+add_importlibs(iernonce msvcrt kernel32 ntdll advapi32 user32)
 add_cd_file(TARGET iernonce DESTINATION reactos/system32 FOR all)
